@@ -1,0 +1,20 @@
+# Compound Facial Emotion Recognition — Dual-Domain Tri-Branch (v2)
+#
+# Kaggle / CUDA 11.8 note: install the matching torch build first, e.g.
+#   pip install torch==2.4.1+cu118 torchvision==0.19.1+cu118 \
+#       --index-url https://download.pytorch.org/whl/cu118
+# then:  pip install -r requirements.txt
+
+torch>=2.0
+torchvision>=0.15
+timm>=0.9                   # Branch 1 backbones (efficientnet_b0 / resnet50)
+transformers>=4.30          # Branch 2 facial-expression ViT (+ huggingface_hub)
+huggingface_hub>=0.20       # optional: VGGFace2 weights from the Hub
+albumentations>=1.3,<2      # v1-style augmentation API
+opencv-python-headless>=4.8 # image I/O + cv2.seamlessClone Poisson blending
+mediapipe>=0.10             # FaceMesh landmarks (splicing masks + Branch 3)
+numpy>=1.24
+scikit-learn>=1.2
+matplotlib>=3.6
+seaborn>=0.12
+pillow>=9.0

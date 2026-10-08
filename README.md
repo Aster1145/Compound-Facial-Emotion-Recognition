@@ -1,4 +1,108 @@
-# Compound Facial Emotion Recognition using Morphological Splicing & Multi-Branch Attention-Transformer Networks
+# Compound Facial Emotion Recognition — Dual-Domain Tri-Branch (v2)
+
+> **v2 refactor:** the notebook-only v1 codebase (SA-CNN + ALSTM + ViT, rigid
+> splicing, single-loss 3-stage curriculum) is preserved below for the 30%
+> review record. All new work lives in the **`src/` package** + the
+> **`train_tribranch.py`** CLI, implementing a domain-specific tri-branch
+> model with landmark-guided Poisson-blending synthesis and a two-phase
+> SupCon → Focal training curriculum.
+
+## 🧠 v2 Architecture (Dual-Domain Tri-Branch)
+
+```
+face image (224×224) ─┬─► Branch 1 LOCAL TEXTURES ──────────────────► 512-D
+                      │   efficientnet_b0 / resnet50 (timm, VGGFace2
+                      │   weights optional) + retained CBAM on the
+                      │   final-stage feature map → 512-D projection
+                      │
+                      ├─► Branch 2 GLOBAL CONTEXT ──────────────────► 512-D
+                      │   trpakov/vit-face-expression (HF transformers,
+                      │   AffectNet-trained); head removed, [CLS] → 512-D
+                      │
+landmarks (468×3) ────┴─► Branch 3 FACIAL GEOMETRY (replaces ALSTM) ─► 512-D
+                          3-layer MLP: 1404 → 1024 → 1024 → 512
+                                              │
+                              [ AttentionFusion gate → α, β, γ ]
+                                              │
+                                   fused embedding (512-D)
+                                              │
+                               Phase 1: SupCon clustering (head frozen)
+                               Phase 2: Focal-loss head (γ=2.0, branches frozen)
+                                              │
+                                    11 compound classes
+```
+
+| v1 component | v2 replacement |
+|---|---|
+| Custom SA-CNN | `timm` `efficientnet_b0`/`resnet50` (+ optional VGGFace2 weights) with retained CBAM |
+| `vit_base_patch16_224` (ImageNet) | `trpakov/vit-face-expression` (AffectNet facial-expression ViT, `[CLS]` → 512-D) |
+| `ALSTM` | **Removed.** `GeometryMLP` over 468×3 MediaPipe landmarks |
+| Rigid alpha-blend / horizontal splice | Landmark masks (eyes/eyebrows from A, mouth/jaw from B) + `cv2.seamlessClone` onto a neutral base |
+| `CrossEntropyLoss` 3-stage curriculum | Phase 1: SupCon on fused embeddings (head frozen) → Phase 2: Focal Loss γ=2.0 (extractors frozen) |
+| Mixed basic/compound label space | Disjoint spaces: RAF-DB offset to 11–17 in Phase 1; compound-only head/val |
+
+## 📂 v2 Codebase Map
+
+```
+src/
+├── config.py     # hyper-parameters, paths, compound taxonomy, phase settings
+├── attention.py  # retained Channel/Spatial/CBAM blocks (unchanged)
+├── branches.py   # LocalTextureEncoder / GlobalContextEncoder / GeometryMLP
+├── fusion.py     # AttentionFusion gate (dynamic α, β, γ)
+├── model.py      # CompoundEmotionModel + build_tribranch_model
+├── landmarks.py  # MediaPipe FaceMesh extraction + region index sets
+├── splicing.py   # LandmarkPoissonSplicer + SyntheticCompoundDataset._splice()
+├── data.py       # datasets, tri-branch transforms, loaders, samplers
+├── losses.py     # SupervisedContrastiveLoss + FocalLoss
+├── train.py      # rewritten run_stage (contrastive/classification) + orchestrator
+└── eval.py       # compound-label metrics for triple batches
+train_tribranch.py  # CLI: python train_tribranch.py --batch-size 64 ...
+requirements.txt    # v2 dependencies
+```
+
+## 🚀 v2 Quickstart (Kaggle)
+
+```bash
+pip install -r requirements.txt
+python train_tribranch.py --batch-size 64 --epochs1 40 --epochs2 25
+
+# ResNet-50 branch with VGGFace2 warm-start:
+python train_tribranch.py --local-backbone resnet50 \
+    --vggface2-weights /kaggle/input/vggface2/resnet50_ft.pth
+```
+
+Library usage:
+
+```python
+from src.config import make_config
+from src.data import get_dataloaders
+from src.model import build_tribranch_model
+from src.train import train_model_two_phase
+from src.eval import evaluate_tribranch
+
+cfg = make_config(BATCH_SIZE=64)
+loaders = get_dataloaders(cfg)          # train_contrast / train_focal / val / rafdb_test
+model = build_tribranch_model(cfg)
+summary, ckpt, log = train_model_two_phase(model, loaders, cfg)
+print(evaluate_tribranch(model, loaders["val"], cfg)["f1_macro"])
+```
+
+Notes:
+- **VGGFace2 weights** for Branch 1 accept a local `.pth`/`.bin` file, an
+  `http(s)` URL, or a `<repo>/<file>` Hugging Face id (loaded
+  `strict=False`). Without it, timm ImageNet weights are used.
+- **Offline fallback:** if the HF facial-expression ViT is unreachable,
+  Branch 2 falls back to a timm ViT with a warning.
+- **Landmark alignment:** tri-branch training transforms are photometric-only
+  (no flip/rotate/affine), because Branch-3 landmarks are extracted from the
+  pre-augmentation image.
+- **Validation labels:** val/test use compound labels (synthetic val from
+  disjoint FER-2013 test pools); RAF-DB test (basic labels) is kept as an
+  auxiliary transfer check.
+
+---
+
+# Compound Facial Emotion Recognition using Morphological Splicing & Multi-Branch Attention-Transformer Networks (v1 — 30% review record)
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![PyTorch 2.0+](https://img.shields.io/badge/PyTorch-2.0%2B-orange.svg)](https://pytorch.org/)
